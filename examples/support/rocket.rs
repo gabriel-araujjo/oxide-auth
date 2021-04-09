@@ -13,6 +13,7 @@ use rocket::response::{Redirect, content::Html, status::Custom};
 pub use self::generic::consent_page_html;
 pub struct ClientFairing;
 
+#[rocket::async_trait]
 impl Fairing for ClientFairing {
     fn info(&self) -> Info {
         Info {
@@ -21,7 +22,7 @@ impl Fairing for ClientFairing {
         }
     }
 
-    fn on_attach(&self, rocket: Rocket) -> Result<Rocket, Rocket> {
+    async fn on_attach(&self, rocket: Rocket) -> Result<Rocket, Rocket> {
         let config = ClientConfig {
             client_id: "LocalClient".into(),
             protected_url: "http://localhost:8000/".into(),
