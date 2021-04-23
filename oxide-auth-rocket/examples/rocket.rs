@@ -8,7 +8,7 @@ mod support;
 use std::io;
 use std::sync::Mutex;
 
-use oxide_auth::endpoint::{OwnerConsent, Solicitation};
+use oxide_auth::endpoint::{OwnerConsent, Solicitation, WebRequest};
 use oxide_auth::frontends::simple::endpoint::{FnSolicitor, Generic, Vacant};
 use oxide_auth::primitives::prelude::*;
 use oxide_auth::primitives::registrar::RegisteredUrl;
@@ -56,24 +56,36 @@ async fn token<'r>(
     mut oauth: OAuthRequest<'r>, body: Data, state: State<'_, MyState>,
 ) -> Result<OAuthResponse<'r>, OAuthFailure> {
     oauth.add_body(body).await;
-    state
-        .endpoint()
-        .access_token_flow()
-        .execute(oauth)
-        .map_err(|err| err.pack::<OAuthFailure>())
+
+    let body = oauth.urlbody().unwrap();
+
+    let result = match body.unique_value("grant_type") {
+        Some(ref cow) if cow == "refresh_token" => {
+            state
+            .endpoint()
+            .refresh_flow()
+            .execute(oauth)
+        },
+        _ => state
+            .endpoint()
+            .access_token_flow()
+            .execute(oauth),
+    };
+
+    result.map_err(|err| err.pack::<OAuthFailure>())
 }
 
-#[post("/refresh", data = "<body>")]
-async fn refresh<'r>(
-    mut oauth: OAuthRequest<'r>, body: Data, state: State<'_, MyState>,
-) -> Result<OAuthResponse<'r>, OAuthFailure> {
-    oauth.add_body(body).await;
-    state
-        .endpoint()
-        .refresh_flow()
-        .execute(oauth)
-        .map_err(|err| err.pack::<OAuthFailure>())
-}
+// #[post("/refresh", data = "<body>")]
+// async fn refresh<'r>(
+//     mut oauth: OAuthRequest<'r>, body: Data, state: State<'_, MyState>,
+// ) -> Result<OAuthResponse<'r>, OAuthFailure> {
+//     oauth.add_body(body).await;
+//     state
+//         .endpoint()
+//         .refresh_flow()
+//         .execute(oauth)
+//         .map_err(|err| err.pack::<OAuthFailure>())
+// }
 
 #[get("/")]
 fn protected_resource<'r, 'o: 'r>(
@@ -111,7 +123,7 @@ fn rocket() -> _ {
     rocket::ignite()
         .mount(
             "/",
-            routes![authorize, authorize_consent, token, protected_resource, refresh,],
+            routes![authorize, authorize_consent, token, protected_resource],
         )
         // We only attach the test client here because there can only be one rocket.
         .attach(support::ClientFairing)
@@ -122,13 +134,21 @@ impl MyState {
     pub fn preconfigured() -> Self {
         MyState {
             registrar: Mutex::new(
-                vec![Client::public(
-                    "LocalClient",
-                    RegisteredUrl::Semantic(
-                        "http://localhost:8000/clientside/endpoint".parse().unwrap(),
+                vec![
+                    Client::public(
+                        "LocalClient",
+                        RegisteredUrl::Semantic(
+                            "http://localhost:8000/clientside/endpoint".parse().unwrap(),
+                        ),
+                        "default-scope".parse().unwrap(),
                     ),
-                    "default-scope".parse().unwrap(),
-                )]
+                    Client::confidential(
+                        "Insomnia",
+                        RegisteredUrl::Semantic("http://localhost:8000/fake_endpoint".parse().unwrap()),
+                        "default-scope".parse().unwrap(),
+                        "c2hoaGho".as_bytes(),
+                    ),
+                ]
                 .into_iter()
                 .collect(),
             ),
